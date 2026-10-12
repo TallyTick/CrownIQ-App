@@ -1,0 +1,76 @@
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+// Note that some adapters may set a maximum length for the String type by default, please ensure your strings are long
+// enough when changing adapters.
+// See https://www.prisma.io/docs/orm/reference/prisma-schema-reference#string for more information
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model Session {
+  id            String    @id
+  shop          String
+  state         String
+  isOnline      Boolean   @default(false)
+  scope         String?
+  expires       DateTime?
+  accessToken   String
+  userId        BigInt?
+  firstName     String?
+  lastName      String?
+  email         String?
+  accountOwner  Boolean   @default(false)
+  locale        String?
+  collaborator  Boolean?  @default(false)
+  emailVerified Boolean?  @default(false)
+  refreshToken        String?
+  refreshTokenExpires DateTime?
+}
+
+model Scan {
+  id           String   @id @default(cuid())
+  shop         String
+  riskScore    Int
+  variantCount Int
+  findingCount Int
+  createdAt    DateTime @default(now())
+  variants     VariantSnapshot[]
+  findings     Finding[]
+  @@index([shop, createdAt])
+}
+
+model VariantSnapshot {
+  id             String @id @default(cuid())
+  scanId         String
+  shop           String
+  variantId      String
+  productId      String
+  productTitle   String
+  variantTitle   String
+  sku            String?
+  tracked        Boolean
+  sellWhenEmpty  Boolean
+  available      Int
+  soldLast30Days Int
+  scan           Scan   @relation(fields: [scanId], references: [id], onDelete: Cascade)
+  @@index([scanId])
+}
+
+model Finding {
+  id        String @id @default(cuid())
+  scanId    String
+  shop      String
+  type      String
+  severity  String
+  variantId String?
+  message   String
+  fix       String
+  scan      Scan   @relation(fields: [scanId], references: [id], onDelete: Cascade)
+  @@index([scanId])
+}
