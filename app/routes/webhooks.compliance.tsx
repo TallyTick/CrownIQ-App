@@ -24,8 +24,6 @@ export async function action({ request }: ActionFunctionArgs) {
     return new Response("Missing shop domain", { status: 400 });
   }
 
-  console.log(`Received compliance webhook: ${topic} for ${shop}`);
-
   // Handle different compliance topics
   switch (topic) {
     case "customers/data_request":
@@ -40,6 +38,8 @@ export async function action({ request }: ActionFunctionArgs) {
       // Delete all data for this shop
       await prisma.scan.deleteMany({ where: { shop } });
       await prisma.session.deleteMany({ where: { shop } });
+      await prisma.alert.deleteMany({ where: { shop } });
+      await prisma.shopSettings.deleteMany({ where: { shop } });
       console.log(`Deleted all data for ${shop} due to shop/redact`);
       break;
 

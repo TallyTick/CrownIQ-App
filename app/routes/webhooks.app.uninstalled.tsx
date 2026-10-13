@@ -8,9 +8,10 @@ export const action = async ({ request }: ActionFunctionArgs) => {
   console.log(`Received ${topic} webhook for ${shop}`);
 
   // Delete all data for this shop when app is uninstalled
-  // This includes scans, variant snapshots, findings, and sessions
+  // This includes scans, variant snapshots, findings, sessions, and alerts
   await prisma.scan.deleteMany({ where: { shop } });
   await prisma.session.deleteMany({ where: { shop } });
+  await prisma.alert.deleteMany({ where: { shop } });
 
   console.log(`Deleted all data for ${shop}`);
 

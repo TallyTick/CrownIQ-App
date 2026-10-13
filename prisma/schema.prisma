@@ -82,3 +82,13 @@ model Alert {
   issueCount Int
   @@index([shop, sentAt])
 }
+
+model ShopSettings {
+  id             String @id @default(cuid())
+  shop           String @unique
+  emailAlerts    Boolean @default(true)
+  alertEmail     String?
+  plan           String  @default("free")
+  trialEndsAt    DateTime?
+  @@index([shop])
+}
