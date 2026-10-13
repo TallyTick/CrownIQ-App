@@ -74,3 +74,11 @@ model Finding {
   scan      Scan   @relation(fields: [scanId], references: [id], onDelete: Cascade)
   @@index([scanId])
 }
+
+model Alert {
+  id        String   @id @default(cuid())
+  shop      String
+  sentAt    DateTime @default(now())
+  issueCount Int
+  @@index([shop, sentAt])
+}
