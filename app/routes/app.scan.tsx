@@ -13,7 +13,7 @@ import type { Finding, Variant } from "../services/types";
 import prisma from "../db.server";
 
 export const loader = async ({ request }: LoaderFunctionArgs) => {
-  const { session } = await authenticate.admin(request);
+  const { admin, session } = await authenticate.admin(request);
 
   // Fetch last 5 scans for this shop
   const scans = await prisma.scan.findMany({
@@ -22,22 +22,74 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
     take: 5,
   });
 
-  return { scans };
+  // Fetch the most recent scan with findings
+  const lastScan = await prisma.scan.findFirst({
+    where: { shop: session.shop },
+    orderBy: { createdAt: "desc" },
+    include: { findings: true },
+  });
+
+  // Auto-run scan if no recent scan exists or it's been a while
+  let autoScan = null;
+  if (!lastScan || new Date(lastScan.createdAt).getTime() < Date.now() - 3600000) {
+    // Run automatic scan
+    const variants = await fetchVariants(admin);
+    const findings = runChecks(variants);
+    const score = riskScore(findings, variants.length);
+
+    const scan = await prisma.scan.create({
+      data: {
+        shop: session.shop,
+        riskScore: score,
+        variantCount: variants.length,
+        findingCount: findings.length,
+        variants: {
+          create: variants.map((v) => ({
+            shop: session.shop,
+            variantId: v.variantId,
+            productId: v.productId,
+            productTitle: v.productTitle,
+            variantTitle: v.variantTitle,
+            sku: v.sku,
+            tracked: v.tracked,
+            sellWhenEmpty: v.sellWhenEmpty,
+            available: v.available,
+            soldLast30Days: v.soldLast30Days,
+          })),
+        },
+        findings: {
+          create: findings.map((f) => ({
+            shop: session.shop,
+            type: f.type,
+            severity: f.severity,
+            variantId: f.variantId,
+            message: f.message,
+            fix: f.fix,
+          })),
+        },
+      },
+    });
+
+    autoScan = {
+      variantCount: variants.length,
+      findings,
+      score,
+      variants,
+      scanCreatedAt: scan.createdAt,
+    };
+  }
+
+  return { scans, lastScan, autoScan };
 };
 
 export const action = async ({ request }: ActionFunctionArgs) => {
   const { admin, session } = await authenticate.admin(request);
 
-  // Fetch all variants from the store
+  // Manual scan (scan again button)
   const variants = await fetchVariants(admin);
-
-  // Run checks on the variants
   const findings = runChecks(variants);
-
-  // Calculate risk score
   const score = riskScore(findings, variants.length);
 
-  // Load previous scan's findings for comparison
   const previousScan = await prisma.scan.findFirst({
     where: { shop: session.shop },
     orderBy: { createdAt: "desc" },
@@ -57,7 +109,6 @@ export const action = async ({ request }: ActionFunctionArgs) => {
     comparison = compareScans(previousFindings, currentFindings);
   }
 
-  // Save scan to database
   const scan = await prisma.scan.create({
     data: {
       shop: session.shop,
@@ -113,17 +164,33 @@ export default function ScanPage() {
 
   const runScan = () => fetcher.submit({}, { method: "POST" });
 
-  const data = fetcher.data;
+  // Use autoScan from loader if available, otherwise use fetcher data
+  const autoScan = loaderData?.autoScan;
+  const data = autoScan || fetcher.data;
   const findings: Finding[] = data?.findings || [];
   const variants: Variant[] = data?.variants || [];
   const score = data?.score || 0;
   const variantCount = data?.variantCount || 0;
-  const scanCreatedAt = data?.scanCreatedAt;
+  const scanCreatedAt = data?.scanCreatedAt || loaderData?.lastScan?.createdAt;
   const comparison = data?.comparison;
   const scans = loaderData?.scans || [];
 
   // Check if sales data is available (all soldLast30Days are 0 means no sales data)
   const hasSalesData = variants.some((v) => v.soldLast30Days > 0);
+
+  // Calculate relative time for last scan
+  const getRelativeTime = (date: Date) => {
+    const now = new Date();
+    const diff = now.getTime() - date.getTime();
+    const minutes = Math.floor(diff / 60000);
+    const hours = Math.floor(diff / 3600000);
+    const days = Math.floor(diff / 86400000);
+
+    if (minutes < 1) return "just now";
+    if (minutes < 60) return `${minutes} minute${minutes > 1 ? 's' : ''} ago`;
+    if (hours < 24) return `${hours} hour${hours > 1 ? 's' : ''} ago`;
+    return `${days} day${days > 1 ? 's' : ''} ago`;
+  };
 
   // Group findings by type
   const findingsByType = new Map<string, Finding[]>();
@@ -208,24 +275,39 @@ export default function ScanPage() {
     return `${variant.productTitle} - ${variant.variantTitle}`;
   };
 
+  // Show loading skeleton while auto-scanning
+  if (autoScan || (isLoading && !data)) {
+    return (
+      <s-page heading="Inventory Scan">
+        <s-button slot="primary-action" onClick={runScan}>
+          Scan again
+        </s-button>
+
+        <s-section heading="Scanning your inventory...">
+          <s-paragraph>We're checking all your products for potential issues.</s-paragraph>
+          <s-box padding="base" borderWidth="base" borderRadius="base" background="subdued">
+            <s-stack direction="block" gap="base">
+              <s-skeleton-display-text size="small" />
+              <s-skeleton-display-text size="small" />
+              <s-skeleton-display-text size="small" />
+            </s-stack>
+          </s-box>
+        </s-section>
+      </s-page>
+    );
+  }
+
   return (
     <s-page heading="Inventory Scan">
       <s-button slot="primary-action" onClick={runScan}>
-        Run scan
+        Scan again
       </s-button>
 
-      <s-section heading="Scan your inventory">
+      {scanCreatedAt && (
         <s-paragraph>
-          Click the button below to scan all products in your store and identify
-          inventory issues like duplicate SKUs, missing tracking, and low stock.
+          Last scanned {getRelativeTime(new Date(scanCreatedAt))}
         </s-paragraph>
-        <s-button
-          onClick={runScan}
-          {...(isLoading ? { loading: true } : {})}
-        >
-          Run scan
-        </s-button>
-      </s-section>
+      )}
 
       {data && (
         <>
@@ -250,11 +332,6 @@ export default function ScanPage() {
             <s-paragraph>
               Scanned {variantCount} variants and found {findings.length} issues.
             </s-paragraph>
-            {scanCreatedAt && (
-              <s-paragraph>
-                Last scan: {new Date(scanCreatedAt).toLocaleString()}
-              </s-paragraph>
-            )}
             {!hasSalesData && (
               <s-box
                 padding="base"
